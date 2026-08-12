@@ -8,6 +8,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/util.h>
 #include "chat_cli.h"
+#include "audio_player.h"
 #include "model_handler.h"
 
 #include <zephyr/logging/log.h>
@@ -149,6 +150,11 @@ static void bt_ready(int err)
 	if (err) {
 		printk("Initializing buttons failed (err %d)\n", err);
 		return;
+	}
+
+	err = audio_player_init();
+	if (err) {
+		printk("Initializing audio playback failed (err %d)\n", err);
 	}
 
 	err = bt_mesh_init(&prov, model_handler_init());

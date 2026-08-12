@@ -15,6 +15,7 @@
 #include <zephyr/shell/shell.h>
 #include <zephyr/shell/shell_uart.h>
 
+#include "audio_player.h"
 #include "chat_cli.h"
 #include "model_handler.h"
 
@@ -199,6 +200,9 @@ static bool parse_rgb_binary_message(const uint8_t *msg, uint8_t *mask)
 
 static bool apply_rgb_binary_message(const uint8_t *msg, uint8_t *mask)
 {
+	const uint8_t ding_mask = BIT(0) | BIT(2);
+	int err;
+
 	if (!parse_rgb_binary_message(msg, mask)) {
 		return false;
 	}
@@ -206,6 +210,13 @@ static bool apply_rgb_binary_message(const uint8_t *msg, uint8_t *mask)
 	(void)k_work_cancel_delayable(&ack_restore_work);
 	rgb_current_mask = *mask;
 	dk_set_leds(*mask);
+
+	if (*mask == ding_mask) {
+		err = audio_player_play_ding();
+		if (err && err != -EALREADY) {
+			LOG_WRN("Failed to play ding: %d", err);
+		}
+	}
 
 	return true;
 }
