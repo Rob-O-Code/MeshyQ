@@ -20,6 +20,7 @@ extern "C" {
 
 const struct bt_mesh_comp *model_handler_init(void);
 void model_handler_set_pub(uint16_t addr, uint16_t app_key_idx, uint8_t ttl);
+int model_handler_broadcast_text(const char *msg);
 
 #ifdef __cplusplus
 }
