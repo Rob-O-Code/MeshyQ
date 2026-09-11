@@ -1,0 +1,7 @@
+/*
+ * Same wiring as the plain (SWD-flashed) target. Zephyr's app-level board
+ * overlay lookup matches the exact board qualifier string only, so the
+ * "/uf2" target (used with the Adafruit UF2 bootloader) needs its own
+ * file rather than falling back to adafruit_feather_nrf52840_nrf52840.overlay.
+ */
+#include "adafruit_feather_nrf52840_nrf52840.overlay"

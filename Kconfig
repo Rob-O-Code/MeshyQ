@@ -8,11 +8,6 @@ source "Kconfig.zephyr"
 
 menu "MeshyQ wireless audio cue system"
 
-config NODE_ADDR
-	hex "Bluetooth Mesh unicast address for this node"
-	default 0x0001
-	range 0x0001 0x7FFF
-
 config BT_MESH_CHAT_CLI_MESSAGE_LENGTH
 	int "Max length of the message to be sent over mesh"
 	default 90

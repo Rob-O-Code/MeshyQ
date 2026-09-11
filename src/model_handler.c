@@ -10,7 +10,6 @@
 
 #include <zephyr/bluetooth/bluetooth.h>
 #include <bluetooth/mesh/models.h>
-#include <dk_buttons_and_leds.h>
 
 #include <zephyr/shell/shell.h>
 #include <zephyr/shell/shell_uart.h>
@@ -23,62 +22,11 @@
 LOG_MODULE_DECLARE(chat);
 
 static const struct shell *chat_shell;
-static struct k_work_delayable ack_restore_work;
-static uint8_t rgb_current_mask;
-static uint8_t ack_restore_mask;
-
-static void ack_restore_handler(struct k_work *work)
-{
-	dk_set_leds(ack_restore_mask);
-}
 
 /******************************************************************************/
 /*************************** Health server setup ******************************/
 /******************************************************************************/
-/* Set up a repeating delayed work to blink the DK's LEDs when attention is
- * requested.
- */
-static struct k_work_delayable attention_blink_work;
-static bool attention;
-
-static void attention_blink(struct k_work *work)
-{
-	static int idx;
-	const uint8_t pattern[] = {
-		BIT(0) | BIT(1),
-		BIT(1) | BIT(2),
-		BIT(2) | BIT(3),
-		BIT(3) | BIT(0),
-	};
-
-	if (attention) {
-		dk_set_leds(pattern[idx++ % ARRAY_SIZE(pattern)]);
-		k_work_reschedule(&attention_blink_work, K_MSEC(30));
-	} else {
-		dk_set_leds(DK_NO_LEDS_MSK);
-	}
-}
-
-static void attention_on(const struct bt_mesh_model *mod)
-{
-	attention = true;
-	k_work_reschedule(&attention_blink_work, K_NO_WAIT);
-}
-
-static void attention_off(const struct bt_mesh_model *mod)
-{
-	/* Will stop rescheduling blink timer */
-	attention = false;
-}
-
-static const struct bt_mesh_health_srv_cb health_srv_cb = {
-	.attn_on = attention_on,
-	.attn_off = attention_off,
-};
-
-static struct bt_mesh_health_srv health_srv = {
-	.cb = &health_srv_cb,
-};
+static struct bt_mesh_health_srv health_srv;
 
 BT_MESH_HEALTH_PUB_DEFINE(health_pub, 0);
 
@@ -169,88 +117,14 @@ static void handle_chat_start(struct bt_mesh_chat_cli *chat)
 	print_client_status();
 }
 
-static bool parse_rgb_binary_message(const uint8_t *msg, uint8_t *mask)
+static void play_if_known_file(const uint8_t *msg)
 {
-	uint8_t parsed_mask = 0;
-
-	/* Accept only exactly 3 characters made of '0' and '1'. */
-	if ((msg[0] != '0' && msg[0] != '1') ||
-	    (msg[1] != '0' && msg[1] != '1') ||
-	    (msg[2] != '0' && msg[2] != '1') ||
-	    msg[3] != '\0') {
-		return false;
-	}
-
-	if (msg[0] == '1') {
-		parsed_mask |= BIT(0);
-	}
-
-	if (msg[1] == '1') {
-		parsed_mask |= BIT(1);
-	}
-
-	if (msg[2] == '1') {
-		parsed_mask |= BIT(2);
-	}
-
-	*mask = parsed_mask;
-
-	return true;
-}
-
-static bool apply_rgb_binary_message(const uint8_t *msg, uint8_t *mask)
-{
-	const uint8_t ding_mask = BIT(0) | BIT(2);
 	int err;
 
-	if (!parse_rgb_binary_message(msg, mask)) {
-		return false;
+	err = audio_player_play_file((const char *)msg);
+	if (err && err != -ENOENT) {
+		LOG_WRN("Failed to play %s: %d", msg, err);
 	}
-
-	(void)k_work_cancel_delayable(&ack_restore_work);
-	rgb_current_mask = *mask;
-	dk_set_leds(*mask);
-
-	if (*mask == ding_mask) {
-		err = audio_player_play_ding();
-		if (err && err != -EALREADY) {
-			LOG_WRN("Failed to play ding: %d", err);
-		}
-	}
-
-	return true;
-}
-
-static void send_white_ack_if_needed(struct bt_mesh_chat_cli *chat,
-				     struct bt_mesh_msg_ctx *ctx,
-				     uint8_t mask)
-{
-	const uint8_t white_mask = BIT(0) | BIT(1) | BIT(2);
-	int err;
-
-	if (mask == white_mask) {
-		return;
-	}
-
-	err = bt_mesh_chat_cli_private_message_send(chat, ctx->addr, "ACK");
-	if (err) {
-		LOG_WRN("Failed to send ACK to 0x%04X: %d", ctx->addr, err);
-	}
-}
-
-static bool handle_ack_message(const uint8_t *msg)
-{
-	const uint8_t white_mask = BIT(0) | BIT(1) | BIT(2);
-
-	if (strcmp((const char *)msg, "ACK") != 0) {
-		return false;
-	}
-
-	ack_restore_mask = rgb_current_mask;
-	dk_set_leds(white_mask);
-	k_work_reschedule(&ack_restore_work, K_MSEC(500));
-
-	return true;
 }
 
 static void handle_chat_presence(struct bt_mesh_chat_cli *chat,
@@ -279,46 +153,26 @@ static void handle_chat_message(struct bt_mesh_chat_cli *chat,
 				struct bt_mesh_msg_ctx *ctx,
 				const uint8_t *msg)
 {
-	uint8_t rgb_mask;
-
-	/* Don't print own messages. */
+	/* Don't react to our own messages. */
 	if (address_is_local(chat->model, ctx->addr)) {
 		return;
 	}
 
-	if (handle_ack_message(msg)) {
-		shell_print(chat_shell, "<0x%04X>: ACK", ctx->addr);
-		return;
-	}
-
-	if (apply_rgb_binary_message(msg, &rgb_mask)) {
-		send_white_ack_if_needed(chat, ctx, rgb_mask);
-	}
-
 	shell_print(chat_shell, "<0x%04X>: %s", ctx->addr, msg);
+	play_if_known_file(msg);
 }
 
 static void handle_chat_private_message(struct bt_mesh_chat_cli *chat,
 					struct bt_mesh_msg_ctx *ctx,
 					const uint8_t *msg)
 {
-	uint8_t rgb_mask;
-
-	/* Don't print own messages. */
+	/* Don't react to our own messages. */
 	if (address_is_local(chat->model, ctx->addr)) {
 		return;
 	}
 
-	if (handle_ack_message(msg)) {
-		shell_print(chat_shell, "<0x%04X>: *you* ACK", ctx->addr);
-		return;
-	}
-
-	if (apply_rgb_binary_message(msg, &rgb_mask)) {
-		send_white_ack_if_needed(chat, ctx, rgb_mask);
-	}
-
 	shell_print(chat_shell, "<0x%04X>: *you* %s", ctx->addr, msg);
+	play_if_known_file(msg);
 }
 
 static void handle_chat_message_reply(struct bt_mesh_chat_cli *chat,
@@ -551,25 +405,18 @@ void model_handler_set_pub(uint16_t addr, uint16_t app_key_idx, uint8_t ttl)
 	chat.model->pub->ttl = ttl;
 }
 
-int model_handler_broadcast_text(const char *msg)
-{
-	if (!msg) {
-		return -EINVAL;
-	}
-
-	if (!chat.model || !chat.model->pub || !bt_mesh_is_provisioned()) {
-		return -EAGAIN;
-	}
-
-	return bt_mesh_chat_cli_message_send(&chat, msg);
-}
-
 const struct bt_mesh_comp *model_handler_init(void)
 {
-	k_work_init_delayable(&attention_blink_work, attention_blink);
-	k_work_init_delayable(&ack_restore_work, ack_restore_handler);
-
 	chat_shell = shell_backend_uart_get_ptr();
 
 	return &comp;
+}
+
+uint16_t model_handler_addr(void)
+{
+	if (!chat.model) {
+		return 0;
+	}
+
+	return bt_mesh_model_elem(chat.model)->rt->addr;
 }

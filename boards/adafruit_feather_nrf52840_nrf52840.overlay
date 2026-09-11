@@ -1,0 +1,47 @@
+/*
+ * Adafruit Music Maker FeatherWing w/ Amp (VS1053 + microSD), stacked
+ * directly on the Feather header.
+ *
+ * SCK/MOSI/MISO come from the board's default feather_spi (spi1) pins.
+ * The two SPI devices below (VS1053 command interface and the SD
+ * card) each get their own entry in spi1's cs-gpios, selected by
+ * their `reg` index. VS1053 XDCS (data chip-select) and DREQ are not
+ * part of the SPI framework's CS handling and are toggled/read
+ * manually by the vs1053 driver. The wing ties VS1053 reset to the
+ * Feather's shared reset line, so there's no separate reset GPIO.
+ *
+ * Pin mapping, per Adafruit's Music Maker FeatherWing wiring for
+ * Feather boards (fixed by the wing's own PCB, not board-specific):
+ *   SD card CS   -> D5  (P1.08)
+ *   VS1053 XCS   -> D6  (P0.07)
+ *   VS1053 DREQ  -> D9  (P0.26)
+ *   VS1053 XDCS  -> D10 (P0.27)
+ */
+
+&spi1 {
+	status = "okay";
+	cs-gpios = <&gpio1 8 GPIO_ACTIVE_LOW>,
+		   <&gpio0 7 GPIO_ACTIVE_LOW>;
+
+	sdhc0: sdhc@0 {
+		compatible = "zephyr,sdhc-spi-slot";
+		reg = <0>;
+		status = "okay";
+		spi-max-frequency = <24000000>;
+
+		mmc {
+			compatible = "zephyr,sdmmc-disk";
+			disk-name = "SD";
+			status = "okay";
+		};
+	};
+
+	vs1053: vs1053@1 {
+		compatible = "adafruit,vs1053";
+		reg = <1>;
+		status = "okay";
+		spi-max-frequency = <1000000>;
+		dreq-gpios = <&gpio0 26 GPIO_ACTIVE_HIGH>;
+		xdcs-gpios = <&gpio0 27 GPIO_ACTIVE_LOW>;
+	};
+};
