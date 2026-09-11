@@ -1,0 +1,24 @@
+/*
+ * SD card only (Music Maker FeatherWing's microSD slot). VS1053 is
+ * deliberately left out of this test.
+ *
+ * SD card CS -> D5 (P1.08)
+ */
+
+&spi1 {
+	status = "okay";
+	cs-gpios = <&gpio1 8 GPIO_ACTIVE_LOW>;
+
+	sdhc0: sdhc@0 {
+		compatible = "zephyr,sdhc-spi-slot";
+		reg = <0>;
+		status = "okay";
+		spi-max-frequency = <24000000>;
+
+		mmc {
+			compatible = "zephyr,sdmmc-disk";
+			disk-name = "SD";
+			status = "okay";
+		};
+	};
+};

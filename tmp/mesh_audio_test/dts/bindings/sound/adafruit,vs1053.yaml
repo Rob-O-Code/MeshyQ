@@ -1,0 +1,30 @@
+description: |
+  VS1053 audio decoder chip, as wired on the Adafruit Music Maker
+  FeatherWing w/ Amp.
+
+  The chip is controlled over SPI using two chip-select lines: XCS
+  selects the command (SCI) interface and is handled by the normal
+  SPI chip-select mechanism (this node's `reg`/the bus's `cs-gpios`
+  entry at that index). XDCS selects the data (SDI) interface and is
+  toggled manually by the driver, since it is asserted independently
+  of XCS on the same SPI bus.
+
+  The wing ties VS1053 XRESET to the Feather's shared reset line
+  rather than a separately controllable GPIO, so there is no
+  reset-gpios property here: the chip comes out of reset when the
+  Feather does, and the driver only issues a software reset over SCI.
+
+compatible: "adafruit,vs1053"
+
+include: [spi-device.yaml]
+
+properties:
+  dreq-gpios:
+    type: phandle-array
+    required: true
+    description: VS1053 DREQ pin (data request, active high input).
+
+  xdcs-gpios:
+    type: phandle-array
+    required: true
+    description: VS1053 XDCS pin (data chip-select, active low).
