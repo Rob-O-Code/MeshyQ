@@ -10,7 +10,7 @@ menu "MeshyQ wireless audio cue system"
 
 config BT_MESH_CHAT_CLI_MESSAGE_LENGTH
 	int "Max length of the message to be sent over mesh"
-	default 90
+	default 160
 	range 0 255
 	help
 	  Impacts on memory size occupied by the buffer of a message to be
@@ -18,9 +18,13 @@ config BT_MESH_CHAT_CLI_MESSAGE_LENGTH
 	  fit into the application SDU. Adjust BT_MESH_TX_SEG_MAX and
 	  BT_MESH_RX_SEG_MAX to be able to receive the longest messages.
 
+	  Sized above the minimum a single filename needs so the "list" command's
+	  comma-separated reply (one node's playable files) has room; a node with
+	  more files than fit just reports as many as it can.
+
 config BT_MESH_CHAT_SAMPLE_PRESENCE_CACHE_SIZE
 	int "Presence cache size"
-	default 10
+	default 16
 	range 0 32767
 	help
 	  Presence cache stores previously received presence of chat clients.
