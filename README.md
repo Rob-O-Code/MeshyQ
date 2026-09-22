@@ -37,8 +37,10 @@ west build -b adafruit_feather_nrf52840/nrf52840/uf2 -d build
 
 ## Flashing
 
-1. Double-tap the physical reset button. The board mounts as a USB drive
-   named `FTHR840BOOT`.
+1. Double-tap the physical reset button, or, if the board is already
+   running firmware with the serial shell up, type `bootloader` at the
+   console instead. Either way the board mounts as a USB drive named
+   `FTHR840BOOT`.
 2. Copy the built firmware onto it:
    ```sh
    cp build/MeshyQ/zephyr/zephyr.uf2 /Volumes/FTHR840BOOT/

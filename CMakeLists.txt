@@ -10,6 +10,8 @@ target_sources(app PRIVATE
   src/audio_player.c
   src/vs1053.c
   src/sd_card.c
+  src/usb_id.c
+  src/bootloader.c
 )
 
 target_include_directories(app PRIVATE
