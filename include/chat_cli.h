@@ -53,7 +53,9 @@ extern "C" {
 #define BT_MESH_CHAT_CLI_MSG_MAXLEN_MESSAGE (\
 				     CONFIG_BT_MESH_CHAT_CLI_MESSAGE_LENGTH \
 				     + 1) /* + \0 */
-#define BT_MESH_CHAT_CLI_MSG_LEN_MESSAGE_REPLY 0
+/* Reply text uses the same minimum/maximum length as a regular message. */
+#define BT_MESH_CHAT_CLI_MSG_MINLEN_MESSAGE_REPLY BT_MESH_CHAT_CLI_MSG_MINLEN_MESSAGE
+#define BT_MESH_CHAT_CLI_MSG_MAXLEN_MESSAGE_REPLY BT_MESH_CHAT_CLI_MSG_MAXLEN_MESSAGE
 #define BT_MESH_CHAT_CLI_MSG_LEN_PRESENCE 1
 #define BT_MESH_CHAT_CLI_MSG_LEN_PRESENCE_GET 0
 
@@ -126,13 +128,17 @@ struct bt_mesh_chat_cli_handlers {
 				      struct bt_mesh_msg_ctx *ctx,
 				      const uint8_t *msg);
 
-	/** @brief Handler for a reply on a private message.
+	/** @brief Handler for a reply to a previously sent message.
 	 *
 	 * @param[in] cli Chat client instance that received the reply.
 	 * @param[in] ctx Context of the incoming message.
+	 * @param[in] msg Pointer to the reply text, describing what the
+	 * replying node is acknowledging (e.g. "found <file>"). Terminated
+	 * with a null character, '\0'.
 	 */
 	void (*const message_reply)(struct bt_mesh_chat_cli *chat,
-				    struct bt_mesh_msg_ctx *ctx);
+				    struct bt_mesh_msg_ctx *ctx,
+				    const uint8_t *msg);
 };
 
 /* .. include_startingpoint_chat_cli_rst_3 */
@@ -207,6 +213,26 @@ int bt_mesh_chat_cli_message_send(struct bt_mesh_chat_cli *chat,
 int bt_mesh_chat_cli_private_message_send(struct bt_mesh_chat_cli *chat,
 					  uint16_t addr,
 					  const uint8_t *msg);
+
+/** @brief Send a reply to the sender of a received message.
+ *
+ * Unlike @ref bt_mesh_chat_cli_private_message_send, this always targets
+ * @p ctx->addr directly regardless of how the original message was
+ * addressed (group or unicast), so it can be used to reply to a message
+ * received via a group publish.
+ *
+ * @param[in] chat Chat Client model instance to send the reply from.
+ * @param[in] ctx  Context of the message being replied to.
+ * @param[in] text Reply text, e.g. "found example.wav". Must be terminated
+ * with a null character, '\0'.
+ *
+ * @retval 0 Successfully sent the reply.
+ * @retval -EINVAL The model is not bound to an application key.
+ * @retval -EAGAIN The device has not been provisioned.
+ */
+int bt_mesh_chat_cli_reply_send(struct bt_mesh_chat_cli *chat,
+				struct bt_mesh_msg_ctx *ctx,
+				const uint8_t *text);
 
 /** @cond INTERNAL_HIDDEN */
 extern const struct bt_mesh_model_op _bt_mesh_chat_cli_op[];

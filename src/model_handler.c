@@ -17,6 +17,7 @@
 #include "audio_player.h"
 #include "chat_cli.h"
 #include "model_handler.h"
+#include "sd_card.h"
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(chat);
@@ -117,14 +118,73 @@ static void handle_chat_start(struct bt_mesh_chat_cli *chat)
 	print_client_status();
 }
 
-static void play_if_known_file(const uint8_t *msg)
+/**
+ * Mesh messages use a formal "cmd args" grammar, e.g. "play a.wav". This
+ * keeps free-form chat text (which never matches a known verb) inert, same
+ * as before, while giving each action its own explicit command instead of
+ * treating every message as a filename to try to play.
+ */
+static void cmd_play(const char *args)
 {
 	int err;
 
-	err = audio_player_play_file((const char *)msg);
+	err = audio_player_play_file(args);
 	if (err && err != -ENOENT) {
-		LOG_WRN("Failed to play %s: %d", msg, err);
+		LOG_WRN("Failed to play %s: %d", args, err);
 	}
+}
+
+/**
+ * "find <file>" checks whether this node has the file, without playing it.
+ * Only a node that has the file replies, so the sender can tell who has it
+ * purely from which nodes ack -- this is also the tool for confirming the
+ * mesh is actually delivering messages end-to-end across the whole fleet.
+ */
+static void cmd_find(struct bt_mesh_chat_cli *chat, struct bt_mesh_msg_ctx *ctx,
+		     const char *args)
+{
+	char path[128];
+	char reply[64];
+
+	if (sd_card_resolve_root_file(args, path, sizeof(path))) {
+		snprintf(reply, sizeof(reply), "found %s", args);
+		(void)bt_mesh_chat_cli_reply_send(chat, ctx, (const uint8_t *)reply);
+	}
+}
+
+/**
+ * "list" asks every node to announce its playable files, comma-separated,
+ * in one reply -- unlike "find", every node replies (even with "(none)"),
+ * since the point is a full roll call rather than locating one file.
+ */
+static void cmd_list(struct bt_mesh_chat_cli *chat, struct bt_mesh_msg_ctx *ctx)
+{
+	char files[BT_MESH_CHAT_CLI_MSG_MAXLEN_MESSAGE];
+	int count;
+
+	count = sd_card_list_playable_files(files, sizeof(files));
+
+	(void)bt_mesh_chat_cli_reply_send(chat, ctx,
+					  count > 0 ? (const uint8_t *)files
+						    : (const uint8_t *)"(none)");
+}
+
+static void handle_command(struct bt_mesh_chat_cli *chat, struct bt_mesh_msg_ctx *ctx,
+			   const uint8_t *msg)
+{
+	const char *text = (const char *)msg;
+	const char *space = strchr(text, ' ');
+	size_t cmd_len = space ? (size_t)(space - text) : strlen(text);
+	const char *args = space ? space + 1 : "";
+
+	if (cmd_len == strlen("play") && strncmp(text, "play", cmd_len) == 0) {
+		cmd_play(args);
+	} else if (cmd_len == strlen("find") && strncmp(text, "find", cmd_len) == 0) {
+		cmd_find(chat, ctx, args);
+	} else if (cmd_len == strlen("list") && strncmp(text, "list", cmd_len) == 0) {
+		cmd_list(chat, ctx);
+	}
+	/* Unrecognized verb (or plain chat text): no action, same as before. */
 }
 
 static void handle_chat_presence(struct bt_mesh_chat_cli *chat,
@@ -159,7 +219,7 @@ static void handle_chat_message(struct bt_mesh_chat_cli *chat,
 	}
 
 	shell_print(chat_shell, "<0x%04X>: %s", ctx->addr, msg);
-	play_if_known_file(msg);
+	handle_command(chat, ctx, msg);
 }
 
 static void handle_chat_private_message(struct bt_mesh_chat_cli *chat,
@@ -172,13 +232,14 @@ static void handle_chat_private_message(struct bt_mesh_chat_cli *chat,
 	}
 
 	shell_print(chat_shell, "<0x%04X>: *you* %s", ctx->addr, msg);
-	play_if_known_file(msg);
+	handle_command(chat, ctx, msg);
 }
 
 static void handle_chat_message_reply(struct bt_mesh_chat_cli *chat,
-				      struct bt_mesh_msg_ctx *ctx)
+				      struct bt_mesh_msg_ctx *ctx,
+				      const uint8_t *msg)
 {
-	shell_print(chat_shell, "<0x%04X> received the message", ctx->addr);
+	shell_print(chat_shell, "<0x%04X>: %s", ctx->addr, msg);
 }
 
 static const struct bt_mesh_chat_cli_handlers chat_handlers = {
@@ -367,11 +428,16 @@ static int cmd_presence(const struct shell *shell, size_t argc, char *argv[])
 SHELL_STATIC_SUBCMD_SET_CREATE(chat_cmds,
 	SHELL_CMD_ARG(status, NULL, "Print client status", cmd_status, 1, 0),
 	SHELL_CMD(presence, &presence_cmds, "Presence commands", cmd_presence),
+	/* SHELL_OPT_ARG_RAW: <cmd> <args> is a multi-word command (e.g.
+	 * "play a.wav"), so everything after <node>/the subcommand name must
+	 * be passed through as one raw, unsplit string instead of being
+	 * tokenized on whitespace.
+	 */
 	SHELL_CMD_ARG(private, NULL,
-		      "Send a private text message to a client <node> <message>",
-		      cmd_private_message, 3, 0),
-	SHELL_CMD_ARG(msg, NULL, "Send a text message to the chat <message>",
-		      cmd_message, 2, 0),
+		      "Send a command as a private message to a client <node> <cmd> <args>",
+		      cmd_private_message, 2, SHELL_OPT_ARG_RAW),
+	SHELL_CMD_ARG(msg, NULL, "Send a command to the chat <cmd> <args>",
+		      cmd_message, 1, SHELL_OPT_ARG_RAW),
 	SHELL_SUBCMD_SET_END
 );
 
@@ -390,6 +456,81 @@ static int cmd_chat(const struct shell *shell, size_t argc, char **argv)
 
 SHELL_CMD_ARG_REGISTER(chat, &chat_cmds, "Bluetooth Mesh Chat Client commands",
 		       cmd_chat, 1, 1);
+
+/******************************************************************************/
+/******************************** Cue shell ************************************/
+/******************************************************************************/
+/*
+ * Thin, discoverable wrappers around the "cmd args" mesh grammar: `cue play
+ * <file>` / `cue find <file>` are shorthand for `chat msg play <file>` /
+ * `chat msg find <file>` (always a group broadcast). `chat msg`/`chat
+ * private` remain available for free-form messages or for targeting one
+ * node directly.
+ */
+static int cue_send(const struct shell *shell, const char *cmd, const char *args)
+{
+	char msg[BT_MESH_CHAT_CLI_MSG_MAXLEN_MESSAGE];
+	int err;
+
+	if (args[0] != '\0') {
+		snprintf(msg, sizeof(msg), "%s %s", cmd, args);
+	} else {
+		snprintf(msg, sizeof(msg), "%s", cmd);
+	}
+
+	err = bt_mesh_chat_cli_message_send(&chat, (const uint8_t *)msg);
+	if (err) {
+		LOG_WRN("Failed to send message: %d", err);
+	}
+
+	shell_print(shell, "<you>: %s", msg);
+
+	return 0;
+}
+
+static int cmd_cue_play(const struct shell *shell, size_t argc, char *argv[])
+{
+	return cue_send(shell, "play", argv[1]);
+}
+
+static int cmd_cue_find(const struct shell *shell, size_t argc, char *argv[])
+{
+	return cue_send(shell, "find", argv[1]);
+}
+
+static int cmd_cue_list(const struct shell *shell, size_t argc, char *argv[])
+{
+	return cue_send(shell, "list", "");
+}
+
+SHELL_STATIC_SUBCMD_SET_CREATE(cue_cmds,
+	SHELL_CMD_ARG(play, NULL,
+		      "Play a file on every mesh node that has it <filename>",
+		      cmd_cue_play, 2, 0),
+	SHELL_CMD_ARG(find, NULL,
+		      "Ask which mesh nodes have a file, without playing it <filename>",
+		      cmd_cue_find, 2, 0),
+	SHELL_CMD_ARG(list, NULL,
+		      "Ask every mesh node to list its playable files",
+		      cmd_cue_list, 1, 0),
+	SHELL_SUBCMD_SET_END
+);
+
+static int cmd_cue(const struct shell *shell, size_t argc, char **argv)
+{
+	if (argc == 1) {
+		shell_help(shell);
+		/* shell returns 1 when help is printed */
+		return 1;
+	}
+
+	shell_error(shell, "%s unknown parameter: %s", argv[0], argv[1]);
+
+	return -EINVAL;
+}
+
+SHELL_CMD_ARG_REGISTER(cue, &cue_cmds, "Broadcast a play/find command to the mesh",
+		       cmd_cue, 1, 1);
 
 /******************************************************************************/
 /******************************** Public API **********************************/

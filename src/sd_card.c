@@ -1,6 +1,8 @@
 #include "sd_card.h"
 
+#include <errno.h>
 #include <string.h>
+#include <strings.h>
 #include <stdio.h>
 
 #include <ff.h>
@@ -11,6 +13,17 @@
 LOG_MODULE_REGISTER(sd_card, CONFIG_LOG_DEFAULT_LEVEL);
 
 #define SD_CARD_MOUNT_POINT "/SD:"
+
+/* Matches the README's claim that the VS1053 decodes WAV and MP3
+ * identically; anything else is skipped in a playable-file listing.
+ */
+static bool has_playable_extension(const char *filename)
+{
+	size_t len = strlen(filename);
+	const char *ext = len >= 4 ? filename + len - 4 : filename;
+
+	return len >= 4 && (strcasecmp(ext, ".wav") == 0 || strcasecmp(ext, ".mp3") == 0);
+}
 
 static FATFS fat_fs;
 static struct fs_mount_t mp = {
@@ -62,6 +75,64 @@ bool sd_card_resolve_root_file(const char *filename, char *path_out, size_t path
 	}
 
 	return entry.type == FS_DIR_ENTRY_FILE;
+}
+
+int sd_card_list_playable_files(char *out, size_t out_size)
+{
+	struct fs_dir_t dir;
+	int err;
+	size_t len = 0;
+	int count = 0;
+
+	if (out_size == 0) {
+		return -EINVAL;
+	}
+	out[0] = '\0';
+
+	fs_dir_t_init(&dir);
+
+	err = fs_opendir(&dir, SD_CARD_MOUNT_POINT);
+	if (err) {
+		return err;
+	}
+
+	while (1) {
+		struct fs_dirent entry;
+		size_t name_len;
+		size_t sep_len = count > 0 ? 1 : 0;
+
+		err = fs_readdir(&dir, &entry);
+		if (err) {
+			break;
+		}
+
+		if (entry.name[0] == '\0') {
+			break;
+		}
+
+		if (entry.type != FS_DIR_ENTRY_FILE || !has_playable_extension(entry.name)) {
+			continue;
+		}
+
+		name_len = strlen(entry.name);
+		if (len + sep_len + name_len + 1 > out_size) {
+			/* Out of room; report what fit rather than truncating
+			 * a filename mid-way or overflowing the buffer.
+			 */
+			break;
+		}
+
+		if (sep_len) {
+			out[len++] = ',';
+		}
+		memcpy(&out[len], entry.name, name_len);
+		len += name_len;
+		out[len] = '\0';
+		count++;
+	}
+
+	fs_closedir(&dir);
+	return count;
 }
 
 static int cmd_ls(const struct shell *shell, size_t argc, char *argv[])

@@ -23,4 +23,21 @@ int sd_card_init(void);
  */
 bool sd_card_resolve_root_file(const char *filename, char *path_out, size_t path_out_size);
 
+/**
+ * @brief Build a comma-separated list of playable (.wav/.mp3) files in the
+ * SD card's root directory.
+ *
+ * If the buffer is too small to hold every playable file, the list is cut
+ * off at the last file that fit rather than a partial filename.
+ *
+ * @param[out] out      Buffer to receive the comma-separated, null-terminated
+ * list. Left as an empty string if there are no playable files.
+ * @param[in]  out_size Size of @p out. Must be at least 1.
+ *
+ * @retval >=0 Number of files included in the list.
+ * @retval -EINVAL @p out_size is 0.
+ * @retval other Negative errno from opening the root directory.
+ */
+int sd_card_list_playable_files(char *out, size_t out_size);
+
 #endif /* SD_CARD_H_ */

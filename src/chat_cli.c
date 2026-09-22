@@ -20,6 +20,14 @@ BUILD_ASSERT(BT_MESH_MODEL_BUF_LEN(BT_MESH_CHAT_CLI_OP_MESSAGE,
 				   BT_MESH_CHAT_CLI_MSG_MAXLEN_MESSAGE) <=
 		    BT_MESH_TX_SDU_MAX,
 	     "The message must fit inside an application SDU.");
+BUILD_ASSERT(BT_MESH_MODEL_BUF_LEN(BT_MESH_CHAT_CLI_OP_MESSAGE_REPLY,
+				   BT_MESH_CHAT_CLI_MSG_MAXLEN_MESSAGE_REPLY) <=
+			    BT_MESH_RX_SDU_MAX,
+	     "The reply must fit inside an application SDU.");
+BUILD_ASSERT(BT_MESH_MODEL_BUF_LEN(BT_MESH_CHAT_CLI_OP_MESSAGE_REPLY,
+				   BT_MESH_CHAT_CLI_MSG_MAXLEN_MESSAGE_REPLY) <=
+			    BT_MESH_TX_SDU_MAX,
+	     "The reply must fit inside an application SDU.");
 
 static void encode_presence(struct net_buf_simple *buf,
 			    enum bt_mesh_chat_cli_presence presence)
@@ -50,16 +58,6 @@ static int handle_message(const struct bt_mesh_model *model, struct bt_mesh_msg_
 }
 
 /* .. include_startingpoint_chat_cli_rst_1 */
-static void send_message_reply(struct bt_mesh_chat_cli *chat,
-			     struct bt_mesh_msg_ctx *ctx)
-{
-	BT_MESH_MODEL_BUF_DEFINE(msg, BT_MESH_CHAT_CLI_OP_MESSAGE_REPLY,
-				 BT_MESH_CHAT_CLI_MSG_LEN_MESSAGE_REPLY);
-	bt_mesh_model_msg_init(&msg, BT_MESH_CHAT_CLI_OP_MESSAGE_REPLY);
-
-	(void)bt_mesh_model_send(chat->model, ctx, &msg, NULL, NULL);
-}
-
 static int handle_private_message(const struct bt_mesh_model *model, struct bt_mesh_msg_ctx *ctx,
 				  struct net_buf_simple *buf)
 {
@@ -72,7 +70,7 @@ static int handle_private_message(const struct bt_mesh_model *model, struct bt_m
 		chat->handlers->private_message(chat, ctx, msg);
 	}
 
-	send_message_reply(chat, ctx);
+	(void)bt_mesh_chat_cli_reply_send(chat, ctx, (const uint8_t *)"received");
 	return 0;
 }
 /* .. include_endpoint_chat_cli_rst_1 */
@@ -81,9 +79,12 @@ static int handle_message_reply(const struct bt_mesh_model *model, struct bt_mes
 				struct net_buf_simple *buf)
 {
 	struct bt_mesh_chat_cli *chat = model->rt->user_data;
+	const uint8_t *msg;
+
+	msg = extract_msg(buf);
 
 	if (chat->handlers->message_reply) {
-		chat->handlers->message_reply(chat, ctx);
+		chat->handlers->message_reply(chat, ctx, msg);
 	}
 
 	return 0;
@@ -133,7 +134,7 @@ const struct bt_mesh_model_op _bt_mesh_chat_cli_op[] = {
 	},
 	{
 		BT_MESH_CHAT_CLI_OP_MESSAGE_REPLY,
-		BT_MESH_LEN_EXACT(BT_MESH_CHAT_CLI_MSG_LEN_MESSAGE_REPLY),
+		BT_MESH_LEN_MIN(BT_MESH_CHAT_CLI_MSG_MINLEN_MESSAGE_REPLY),
 		handle_message_reply
 	},
 	{
@@ -261,6 +262,21 @@ int bt_mesh_chat_cli_presence_set(struct bt_mesh_chat_cli *chat,
 	return bt_mesh_model_publish(chat->model);
 }
 /* .. include_endpoint_chat_cli_rst_8 */
+
+int bt_mesh_chat_cli_reply_send(struct bt_mesh_chat_cli *chat,
+				struct bt_mesh_msg_ctx *ctx,
+				const uint8_t *text)
+{
+	BT_MESH_MODEL_BUF_DEFINE(msg, BT_MESH_CHAT_CLI_OP_MESSAGE_REPLY,
+				 BT_MESH_CHAT_CLI_MSG_MAXLEN_MESSAGE_REPLY);
+	bt_mesh_model_msg_init(&msg, BT_MESH_CHAT_CLI_OP_MESSAGE_REPLY);
+
+	net_buf_simple_add_mem(&msg, text,
+			       strnlen(text, CONFIG_BT_MESH_CHAT_CLI_MESSAGE_LENGTH));
+	net_buf_simple_add_u8(&msg, '\0');
+
+	return bt_mesh_model_send(chat->model, ctx, &msg, NULL, NULL);
+}
 
 int bt_mesh_chat_cli_presence_get(struct bt_mesh_chat_cli *chat,
 				  uint16_t addr)
