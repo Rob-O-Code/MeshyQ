@@ -11,6 +11,7 @@
 #include <zephyr/bluetooth/bluetooth.h>
 #include <bluetooth/mesh/models.h>
 
+#include <zephyr/kernel.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/shell/shell_uart.h>
 
@@ -118,6 +119,94 @@ static void handle_chat_start(struct bt_mesh_chat_cli *chat)
 	print_client_status();
 }
 
+/* Deferred worker for "list": sd_card_list_playable_files() does a full
+ * FAT directory scan over SPI, which is too slow to run directly on the
+ * Bluetooth Mesh model's incoming-message dispatch path -- while it's
+ * running, this node can't process other concurrently-arriving segmented
+ * messages (see the mesh RX segment slot exhaustion this caused). Mirrors
+ * audio_player.c's own thread-plus-semaphore pattern for the same class
+ * of problem, with its own stack for the same reason: FatFs keeps
+ * per-call work buffers on the stack.
+ */
+#define LIST_WORKER_STACK_SIZE 4096
+/* One priority step below audio_player.c's AUDIO_THREAD_PRIO (7), so a
+ * list scan can never delay audio buffer feeding.
+ */
+#define LIST_WORKER_THREAD_PRIO 8
+
+K_THREAD_STACK_DEFINE(list_worker_stack, LIST_WORKER_STACK_SIZE);
+
+static struct {
+	struct k_sem request;
+	struct k_mutex lock;
+	struct k_thread thread;
+	k_tid_t thread_id;
+	bool busy;
+	struct bt_mesh_chat_cli *pending_chat;
+	struct bt_mesh_msg_ctx pending_ctx;
+} list_worker;
+
+static void list_worker_thread(void *arg1, void *arg2, void *arg3)
+{
+	ARG_UNUSED(arg1);
+	ARG_UNUSED(arg2);
+	ARG_UNUSED(arg3);
+
+	while (1) {
+		struct bt_mesh_chat_cli *chat;
+		struct bt_mesh_msg_ctx ctx;
+		char files[BT_MESH_CHAT_CLI_MSG_MAXLEN_MESSAGE];
+		int count;
+
+		k_sem_take(&list_worker.request, K_FOREVER);
+
+		k_mutex_lock(&list_worker.lock, K_FOREVER);
+		chat = list_worker.pending_chat;
+		ctx = list_worker.pending_ctx;
+		k_mutex_unlock(&list_worker.lock);
+
+		count = sd_card_list_playable_files(files, sizeof(files));
+
+		(void)bt_mesh_chat_cli_reply_send(chat, &ctx,
+						  count > 0 ? (const uint8_t *)files
+							    : (const uint8_t *)"(none)");
+
+		k_mutex_lock(&list_worker.lock, K_FOREVER);
+		list_worker.busy = false;
+		k_mutex_unlock(&list_worker.lock);
+	}
+}
+
+static int list_worker_request(struct bt_mesh_chat_cli *chat, struct bt_mesh_msg_ctx *ctx)
+{
+	k_mutex_lock(&list_worker.lock, K_FOREVER);
+	if (list_worker.busy) {
+		k_mutex_unlock(&list_worker.lock);
+		return -EALREADY;
+	}
+
+	list_worker.busy = true;
+	list_worker.pending_chat = chat;
+	list_worker.pending_ctx = *ctx;
+	k_mutex_unlock(&list_worker.lock);
+
+	k_sem_give(&list_worker.request);
+	return 0;
+}
+
+static void list_worker_init(void)
+{
+	k_sem_init(&list_worker.request, 0, 1);
+	k_mutex_init(&list_worker.lock);
+
+	list_worker.thread_id = k_thread_create(&list_worker.thread, list_worker_stack,
+						K_THREAD_STACK_SIZEOF(list_worker_stack),
+						list_worker_thread, NULL, NULL, NULL,
+						K_PRIO_PREEMPT(LIST_WORKER_THREAD_PRIO), 0,
+						K_NO_WAIT);
+	(void)k_thread_name_set(list_worker.thread_id, "list_worker");
+}
+
 /**
  * Mesh messages use a formal "cmd args" grammar, e.g. "play a.wav". This
  * keeps free-form chat text (which never matches a known verb) inert, same
@@ -159,14 +248,12 @@ static void cmd_find(struct bt_mesh_chat_cli *chat, struct bt_mesh_msg_ctx *ctx,
  */
 static void cmd_list(struct bt_mesh_chat_cli *chat, struct bt_mesh_msg_ctx *ctx)
 {
-	char files[BT_MESH_CHAT_CLI_MSG_MAXLEN_MESSAGE];
-	int count;
+	int err;
 
-	count = sd_card_list_playable_files(files, sizeof(files));
-
-	(void)bt_mesh_chat_cli_reply_send(chat, ctx,
-					  count > 0 ? (const uint8_t *)files
-						    : (const uint8_t *)"(none)");
+	err = list_worker_request(chat, ctx);
+	if (err) {
+		LOG_WRN("Failed to queue list request: %d", err);
+	}
 }
 
 static void handle_command(struct bt_mesh_chat_cli *chat, struct bt_mesh_msg_ctx *ctx,
@@ -549,6 +636,8 @@ void model_handler_set_pub(uint16_t addr, uint16_t app_key_idx, uint8_t ttl)
 const struct bt_mesh_comp *model_handler_init(void)
 {
 	chat_shell = shell_backend_uart_get_ptr();
+
+	list_worker_init();
 
 	return &comp;
 }
