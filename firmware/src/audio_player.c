@@ -216,6 +216,34 @@ SHELL_CMD_ARG_REGISTER(play, NULL,
 			"Play a file from the SD card's root directory <filename>", cmd_play, 2,
 			0);
 
+uint8_t audio_player_get_volume(void)
+{
+	return volume_percent;
+}
+
+int audio_player_set_volume(uint8_t percent)
+{
+	bool ready;
+
+	if (percent > 100) {
+		return -EINVAL;
+	}
+
+	k_mutex_lock(&player.lock, K_FOREVER);
+	ready = player.ready;
+	k_mutex_unlock(&player.lock);
+
+	if (!ready) {
+		return -ENODEV;
+	}
+
+	volume_percent = percent;
+	vs1053_set_volume(percent_to_attenuation(volume_percent),
+			   percent_to_attenuation(volume_percent));
+
+	return 0;
+}
+
 /* Volume is a VS1053 hardware register, not a per-file setting: it stays
  * wherever it's set across every subsequent play (and every mesh-triggered
  * playback), so it's its own command rather than a `play` argument.
@@ -224,20 +252,11 @@ static int cmd_volume(const struct shell *shell, size_t argc, char *argv[])
 {
 	long percent;
 	char *endptr;
-	bool ready;
+	int err;
 
 	if (argc == 1) {
-		shell_print(shell, "Volume: %u%%", volume_percent);
+		shell_print(shell, "Volume: %u%%", audio_player_get_volume());
 		return 0;
-	}
-
-	k_mutex_lock(&player.lock, K_FOREVER);
-	ready = player.ready;
-	k_mutex_unlock(&player.lock);
-
-	if (!ready) {
-		shell_error(shell, "Audio player not initialized");
-		return -ENODEV;
 	}
 
 	percent = strtol(argv[1], &endptr, 10);
@@ -246,10 +265,18 @@ static int cmd_volume(const struct shell *shell, size_t argc, char *argv[])
 		return -EINVAL;
 	}
 
-	volume_percent = (uint8_t)percent;
-	vs1053_set_volume(percent_to_attenuation(volume_percent),
-			   percent_to_attenuation(volume_percent));
-	shell_print(shell, "Volume set to %u%%", volume_percent);
+	err = audio_player_set_volume((uint8_t)percent);
+	switch (err) {
+	case 0:
+		shell_print(shell, "Volume set to %u%%", audio_player_get_volume());
+		break;
+	case -ENODEV:
+		shell_error(shell, "Audio player not initialized");
+		break;
+	default:
+		shell_error(shell, "Failed to set volume: %d", err);
+		break;
+	}
 
 	return 0;
 }

@@ -12,6 +12,7 @@ target_sources(app PRIVATE
   src/sd_card.c
   src/usb_id.c
   src/bootloader.c
+  src/web_api.c
 )
 
 target_include_directories(app PRIVATE

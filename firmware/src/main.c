@@ -9,6 +9,7 @@
 #include "chat_cli.h"
 #include "audio_player.h"
 #include "model_handler.h"
+#include "web_api.h"
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(chat, CONFIG_LOG_DEFAULT_LEVEL);
@@ -110,6 +111,11 @@ static void bt_ready(int err)
 	err = audio_player_init();
 	if (err) {
 		printk("Initializing audio playback failed (err %d)\n", err);
+	}
+
+	err = web_api_init();
+	if (err) {
+		printk("Initializing web API failed (err %d)\n", err);
 	}
 
 	err = bt_mesh_init(&prov, model_handler_init());

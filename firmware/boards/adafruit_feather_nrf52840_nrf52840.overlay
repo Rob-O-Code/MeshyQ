@@ -45,3 +45,25 @@
 		xdcs-gpios = <&gpio0 27 GPIO_ACTIVE_LOW>;
 	};
 };
+
+/*
+ * Second CDC-ACM USB interface, alongside the existing shell/console UART
+ * (board_cdc_acm_uart, defined upstream in
+ * zephyr/boards/common/usb/cdc_acm_serial.dtsi and wired to zephyr,console/
+ * zephyr,shell-uart there). This node is not referenced by any zephyr,*
+ * chosen property, so the existing shell/log console is untouched; it is
+ * registered as a second USB class instance directly by src/usb_id.c and
+ * carries the structured JSON protocol used by the web app (src/web_api.c).
+ *
+ * `label` becomes this interface's USB interface string descriptor,
+ * distinguishing it from the shell interface at the USB descriptor level
+ * (useful for OS-level tooling; not guaranteed to surface in a browser's
+ * Web Serial port picker).
+ */
+&zephyr_udc0 {
+	web_api_cdc_acm_uart: web_api_cdc_acm_uart {
+		compatible = "zephyr,cdc-acm-uart";
+		status = "okay";
+		label = "MeshyQ Control";
+	};
+};

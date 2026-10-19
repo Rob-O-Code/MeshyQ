@@ -44,7 +44,7 @@ west build -b adafruit_feather_nrf52840/nrf52840/uf2 -d build
    `FTHR840BOOT`.
 2. Copy the built firmware onto it:
    ```sh
-   cp build/MeshyQ/zephyr/zephyr.uf2 /Volumes/FTHR840BOOT/
+   cp build/firmware/zephyr/zephyr.uf2 /Volumes/FTHR840BOOT/
    ```
    A `fcopyfile`/`fchmod` error at the end is expected and harmless — the
    board reboots into the new firmware the moment it finishes receiving

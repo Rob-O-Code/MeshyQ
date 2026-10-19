@@ -21,6 +21,8 @@
 #include <zephyr/drivers/hwinfo.h>
 #include <zephyr/usb/usbd.h>
 
+#include "web_api.h"
+
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(usb_id, CONFIG_USBD_LOG_LEVEL);
 
@@ -111,10 +113,31 @@ static int meshyq_usb_init(void)
 		return err;
 	}
 
+	/* Matches web_api_cdc_acm_uart (see boards, *.overlay), the structured
+	 * JSON control interface used by the web app (see web_api.c). Not
+	 * referenced by any zephyr,* chosen property, so this is purely a
+	 * second logical serial port alongside the shell/console above.
+	 */
+	err = usbd_register_class(&meshyq_usbd, "cdc_acm_1", USBD_SPEED_FS, 1);
+	if (err) {
+		LOG_ERR("Failed to register cdc_acm_1 (%d)", err);
+		return err;
+	}
+
 	err = usbd_device_set_code_triple(&meshyq_usbd, USBD_SPEED_FS,
 					  USB_BCC_MISCELLANEOUS, 0x02, 0x01);
 	if (err) {
 		LOG_ERR("Failed to set code triple (%d)", err);
+		return err;
+	}
+
+	/* Single device-wide message callback slot; web_api.c filters for the
+	 * events it cares about (DTR on its own interface) and ignores the
+	 * rest.
+	 */
+	err = usbd_msg_register_cb(&meshyq_usbd, web_api_usbd_msg_handler);
+	if (err) {
+		LOG_ERR("Failed to register USB message callback (%d)", err);
 		return err;
 	}
 

@@ -135,7 +135,7 @@ int sd_card_list_playable_files(char *out, size_t out_size)
 	return count;
 }
 
-static int cmd_ls(const struct shell *shell, size_t argc, char *argv[])
+int sd_card_list_root(sd_card_list_root_cb_t cb, void *user_data)
 {
 	struct fs_dir_t dir;
 	int err;
@@ -144,7 +144,6 @@ static int cmd_ls(const struct shell *shell, size_t argc, char *argv[])
 
 	err = fs_opendir(&dir, SD_CARD_MOUNT_POINT);
 	if (err) {
-		shell_error(shell, "Failed to open %s: %d", SD_CARD_MOUNT_POINT, err);
 		return err;
 	}
 
@@ -153,23 +152,42 @@ static int cmd_ls(const struct shell *shell, size_t argc, char *argv[])
 
 		err = fs_readdir(&dir, &entry);
 		if (err) {
-			shell_error(shell, "Read error: %d", err);
 			break;
 		}
 
 		if (entry.name[0] == '\0') {
+			err = 0;
 			break;
 		}
 
-		if (entry.type == FS_DIR_ENTRY_DIR) {
-			shell_print(shell, "%s/", entry.name);
-		} else {
-			shell_print(shell, "%-32s %u", entry.name, entry.size);
-		}
+		cb(entry.name, entry.type == FS_DIR_ENTRY_DIR, entry.size, user_data);
 	}
 
 	fs_closedir(&dir);
-	return 0;
+	return err;
+}
+
+static void print_ls_entry(const char *name, bool is_dir, uint32_t size, void *user_data)
+{
+	const struct shell *shell = user_data;
+
+	if (is_dir) {
+		shell_print(shell, "%s/", name);
+	} else {
+		shell_print(shell, "%-32s %u", name, size);
+	}
+}
+
+static int cmd_ls(const struct shell *shell, size_t argc, char *argv[])
+{
+	int err;
+
+	err = sd_card_list_root(print_ls_entry, (void *)shell);
+	if (err) {
+		shell_error(shell, "Failed to list %s: %d", SD_CARD_MOUNT_POINT, err);
+	}
+
+	return err;
 }
 
 SHELL_CMD_ARG_REGISTER(ls, NULL, "List the SD card's root directory", cmd_ls, 1, 0);

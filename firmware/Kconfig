@@ -30,6 +30,14 @@ config BT_MESH_CHAT_SAMPLE_PRESENCE_CACHE_SIZE
 	  Presence cache stores previously received presence of chat clients.
 	  Recommended to be as big as number of chat clients in the mesh network.
 
+config WEB_API_LINE_BUF_SIZE
+	int "Max line length for the structured web API protocol"
+	default 512
+	help
+	  Must fit the largest single JSON request/response/event exchanged
+	  over the web API's CDC-ACM interface, e.g. a "cue list" reply
+	  enumerating every playable file.
+
 endmenu
 
 module = BT_MESH_CHAT_CLI
